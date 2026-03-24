@@ -2,3 +2,5 @@ streamlit
 pandas
 scikit-learn
 joblib
+gspread
+google-auth

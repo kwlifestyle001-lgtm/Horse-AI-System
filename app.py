@@ -9,7 +9,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="AI 賽馬帝國神算子", page_icon="🏇", layout="wide")
-st.title("🏇 AI 賽馬帝國 V7.4 (V3 終極聖杯版)")
+st.title("🏇 AI 賽馬帝國 V7.4 (抗干擾終極版)")
 st.markdown("---")
 
 # ==========================================
@@ -38,7 +38,6 @@ def load_models():
     try:
         model_v1 = joblib.load('hkjc_ai_brain_v1.pkl')
         model_v2 = joblib.load('hkjc_ai_brain_v2_no_odds.pkl')
-        # 載入全新的 V3 聖杯大腦！
         model_v3 = joblib.load('hkjc_ai_brain_v3_holygrail.pkl')
         return model_v1, model_v2, model_v3
     except Exception as e:
@@ -51,9 +50,12 @@ if 'races_db' not in st.session_state:
     st.session_state['races_db'] = {}
 
 # ==========================================
-# 2. 核心黑科技：終極雷達
+# 2. 核心黑科技：終極雷達 (含減磅過濾器)
 # ==========================================
 def parse_horse_data(text):
+    # 🌟 首席工程師的抗干擾升級：自動刪除 (-2), (-5) 等騎師減磅數字！
+    text = re.sub(r'[\(（]\-\d+[\)）]', '', text) 
+    
     parsed = []
     text = text.replace('\n', ' ').replace('\t', ' ').replace('>', ' ').replace('\xa0', ' ')
     
@@ -122,7 +124,7 @@ if st.sidebar.button("🔄 解析文字並生成表格"):
             extracted_data = parse_horse_data(pasted_text)
             if extracted_data:
                 st.session_state['races_db'][race_key] = pd.DataFrame(extracted_data)
-                st.sidebar.success(f"✅ 抓取到 {len(extracted_data)} 匹馬！")
+                st.sidebar.success(f"✅ 抓取到 {len(extracted_data)} 匹馬！已自動過濾騎師減磅干擾！")
                 st.rerun()
             else:
                 st.sidebar.error("⚠️ 找不到資料！")
@@ -133,7 +135,6 @@ if st.sidebar.button("🔄 解析文字並生成表格"):
 tab1, tab2 = st.tabs(["🔮 AI 預測大廳", "🏆 雲端戰績資料庫"])
 
 with tab1:
-    # 這裡就是關鍵！新增了 V3 聖杯大腦的選項！
     mode = st.radio("選擇作戰大腦：", ("🏆 聖杯大腦 (V3 終極融合)", "💰 殺莊大腦 (V1 穩陣)", "💪 物理大腦 (V2 尋寶)"), horizontal=True)
     col1, col2 = st.columns([2, 1]) 
     

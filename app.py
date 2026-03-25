@@ -9,7 +9,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="AI 賽馬帝國神算子", page_icon="🏇", layout="wide")
-st.title("🏇 AI 賽馬帝國 V7.0 (雲端永生版)")
+st.title("🏇 AI 賽馬帝國 V7.1 (雲端精準雷達版)")
 st.markdown("---")
 
 # ==========================================
@@ -49,7 +49,7 @@ if 'races_db' not in st.session_state:
     st.session_state['races_db'] = {}
 
 # ==========================================
-# 2. 核心黑科技：終極雷達 (新增騎師馬房擷取)
+# 2. 核心黑科技：終極雷達 (V7.1 修正馬房騎師抓取)
 # ==========================================
 def parse_horse_data(text):
     parsed = []
@@ -61,7 +61,11 @@ def parse_horse_data(text):
         
         if match:
             name = match.group(1)
-            chunk = text[match.end():match.end()+80]
+            # 尋找下一匹馬的位置，避免抓過頭
+            next_pattern = rf'(?<!\d){i+1}(?!\d)\s*\.?\s*[\u4e00-\u9fa5]'
+            next_match = re.search(next_pattern, text[match.end():])
+            end_pos = match.end() + next_match.start() if next_match else match.end() + 60
+            chunk = text[match.end():end_pos]
             
             # 抓取檔位跟負磅
             dw_wt = re.search(r'(?<!\d)(\d{1,2})\s*(1[1-3]\d)(?!\d)', chunk)
@@ -71,10 +75,11 @@ def parse_horse_data(text):
             else:
                 draw, wt = 1, 125
                 
-            # 抓取騎師與馬房 (抓取不是馬名、不是數字的純中文字)
-            chinese_chars = "".join(re.findall(r'[\u4e00-\u9fa5]+', chunk))
-            jockey_trainer = chinese_chars.replace(name, "")[:8] # 取前8個字當作騎練組合
-            if not jockey_trainer: jockey_trainer = "未知"
+            # V7.1 精準抓取騎師與馬房：只取這個區塊裡的前兩個獨立中文詞！
+            chinese_blocks = re.findall(r'[\u4e00-\u9fa5]+', chunk[:40])
+            jockey_trainer_list = [word for word in chinese_blocks if word != name and word != "倍"]
+            jockey_trainer = " ".join(jockey_trainer_list[:2]) # 用空格把騎師和練馬師隔開
+            if not jockey_trainer.strip(): jockey_trainer = "未知"
                 
             # 盡力尋找獨贏賠率
             odds = 10.0
@@ -93,7 +98,7 @@ def parse_horse_data(text):
                         except: pass
                         
             parsed.append({
-                '馬號': i, '馬名': name, '騎師/馬房': jockey_trainer,
+                '馬號': i, '馬名': name, '騎練': jockey_trainer,
                 '實際負磅': wt, '排位體重': 1100, '檔位': draw, 
                 '獨贏賠率': odds, '休息天數': 30
             })
@@ -160,7 +165,7 @@ with tab1:
                     final_df['AI 評語'] = final_df.apply(get_tag, axis=1)
                     st.success("✅ 預測完成！")
                     st.dataframe(
-                        final_df[['馬號', '馬名', '騎師/馬房', '檔位', '實際負磅', '獨贏賠率', 'AI預測入位率(%)', 'AI 評語']].style.format({'AI預測入位率(%)': '{:.1f}%', '獨贏賠率': '{:.1f}'})
+                        final_df[['馬號', '馬名', '騎練', '檔位', '實際負磅', '獨贏賠率', 'AI預測入位率(%)', 'AI 評語']].style.format({'AI預測入位率(%)': '{:.1f}%', '獨贏賠率': '{:.1f}'})
                         .background_gradient(subset=['AI預測入位率(%)'], cmap='Blues'),
                         use_container_width=True, height=500
                     )
@@ -189,7 +194,6 @@ with tab2:
     if gc:
         try:
             sheet = gc.open("Horse_AI_Database").worksheet("戰績歷史")
-            # 如果表是空的，先寫入標題
             if not sheet.get_all_values():
                 sheet.append_row(["日期", "場次", "冠軍", "亞軍", "季軍", "殿軍", "本場盈虧", "筆記"])
                 
@@ -204,7 +208,6 @@ with tab2:
                 notes = st.text_input("📝 賽後筆記：")
                 
                 if st.form_submit_button("💾 儲存至雲端試算表"):
-                    # 寫入 Google Sheets
                     sheet.append_row([str(race_date), f"第 {race_no} 場", first, second, third, fourth, profit_loss, notes])
                     st.success(f"✅ 成功！戰績已永久儲存至你的 Google 試算表！")
             

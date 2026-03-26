@@ -220,30 +220,50 @@ with tab1:
             
         with st.form("payout_form"):
             st.markdown("##### 📝 快速紀錄全部派彩")
-            p_col1, p_col2 = st.columns(2)
             
-            with p_col1:
-                f_win = st.number_input("獨贏 ($)", min_value=0.0, step=1.0)
-                f_pla = st.number_input("位置 ($)", min_value=0.0, step=1.0)
-                f_qin = st.number_input("連贏 ($)", min_value=0.0, step=1.0)
-                f_qpl = st.number_input("位置Q ($)", min_value=0.0, step=1.0)
-                f_fc = st.number_input("二重彩 ($)", min_value=0.0, step=10.0)
-                
-            with p_col2:
-                f_tce = st.number_input("三重彩 ($)", min_value=0.0, step=10.0)
-                f_tri = st.number_input("單T ($)", min_value=0.0, step=10.0)
-                f_f4 = st.number_input("四連環 ($)", min_value=0.0, step=10.0)
-                f_qtt = st.number_input("四重彩 ($)", min_value=0.0, step=100.0)
-                
+            # 第 1 排：獨贏、連贏、單T
+            c1, c2, c3 = st.columns(3)
+            f_win = c1.number_input("獨贏 ($)", min_value=0.0, step=1.0)
+            f_qin = c2.number_input("連贏 ($)", min_value=0.0, step=1.0)
+            f_tri = c3.number_input("單T ($)", min_value=0.0, step=10.0)
+            
+            # 第 2 排：位置 (分開 3 格)
+            st.markdown("###### 位置 ($)")
+            pc1, pc2, pc3 = st.columns(3)
+            f_pla_1 = pc1.number_input("第1名", min_value=0.0, step=1.0, key="p1")
+            f_pla_2 = pc2.number_input("第2名", min_value=0.0, step=1.0, key="p2")
+            f_pla_3 = pc3.number_input("第3名", min_value=0.0, step=1.0, key="p3")
+            
+            # 第 3 排：位置Q (分開 3 格)
+            st.markdown("###### 位置Q ($)")
+            qc1, qc2, qc3 = st.columns(3)
+            f_qpl_1 = qc1.number_input("1-2名", min_value=0.0, step=1.0, key="q1")
+            f_qpl_2 = qc2.number_input("1-3名", min_value=0.0, step=1.0, key="q2")
+            f_qpl_3 = qc3.number_input("2-3名", min_value=0.0, step=1.0, key="q3")
+            
+            # 第 4 排：其他彩池
+            c4, c5, c6 = st.columns(3)
+            f_fc = c4.number_input("二重彩 ($)", min_value=0.0, step=10.0)
+            f_tce = c5.number_input("三重彩 ($)", min_value=0.0, step=10.0)
+            f_f4 = c6.number_input("四連環 ($)", min_value=0.0, step=10.0)
+            
+            # 第 5 排：四重彩與盈虧
+            f_qtt = st.number_input("四重彩 ($)", min_value=0.0, step=100.0)
             st.markdown("---")
             my_profit = st.number_input("💰 本場我的實際盈虧 ($)", step=10.0)
             
             if st.form_submit_button("💾 更新至財務對帳台"):
                 st.success("✅ 數據已準備好，請至『財務對帳台』確認上傳雲端！")
                 st.session_state['temp_profit'] = my_profit
+                
+                # 🌟 獨立儲存 13 個派彩變數！
                 st.session_state['temp_payouts'] = {
-                    "獨贏": f_win, "位置": f_pla, "連贏": f_qin, "位置Q": f_qpl, "二重彩": f_fc,
-                    "三重彩": f_tce, "單T": f_tri, "四連環": f_f4, "四重彩": f_qtt
+                    "獨贏": f_win, 
+                    "位置1": f_pla_1, "位置2": f_pla_2, "位置3": f_pla_3,
+                    "連贏": f_qin, 
+                    "位置Q1": f_qpl_1, "位置Q2": f_qpl_2, "位置Q3": f_qpl_3,
+                    "二重彩": f_fc, "三重彩": f_tce, "單T": f_tri, 
+                    "四連環": f_f4, "四重彩": f_qtt
                 }
 
 # ----------------- 分頁 2：歷史戰績儲存 -----------------
@@ -253,8 +273,14 @@ with tab2:
         try:
             sheet = gc.open("Horse_AI_Database").worksheet("戰績歷史")
             
+            # 🌟 表頭擴充到 21 欄！
             if not sheet.get_all_values():
-                sheet.append_row(["日期", "場次", "冠軍", "亞軍", "季軍", "殿軍", "本場盈虧", "獨贏派彩", "位置派彩", "連贏派彩", "位置Q派彩", "二重彩派彩", "三重彩派彩", "單T派彩", "四連環派彩", "四重彩派彩", "筆記"])
+                sheet.append_row([
+                    "日期", "場次", "冠軍", "亞軍", "季軍", "殿軍", "本場盈虧", 
+                    "獨贏派彩", "位置1派彩", "位置2派彩", "位置3派彩", "連贏派彩", 
+                    "位置Q1派彩", "位置Q2派彩", "位置Q3派彩", "二重彩派彩", 
+                    "三重彩派彩", "單T派彩", "四連環派彩", "四重彩派彩", "筆記"
+                ])
                 
             with st.form("result_form"):
                 col_r1, col_r2, col_r3, col_r4 = st.columns(4)
@@ -268,15 +294,20 @@ with tab2:
                 
                 if st.form_submit_button("💾 正式儲存戰績與派彩至雲端"):
                     payouts = st.session_state.get('temp_payouts', {})
+                    
+                    # 🌟 完美對應 21 欄資料！
                     row_data = [
                         str(race_date), f"第 {race_no} 場", first, second, third, fourth, profit_loss,
-                        payouts.get("獨贏", 0), payouts.get("位置", 0), payouts.get("連贏", 0),
-                        payouts.get("位置Q", 0), payouts.get("二重彩", 0), payouts.get("三重彩", 0),
-                        payouts.get("單T", 0), payouts.get("四連環", 0), payouts.get("四重彩", 0),
+                        payouts.get("獨贏", 0),
+                        payouts.get("位置1", 0), payouts.get("位置2", 0), payouts.get("位置3", 0),
+                        payouts.get("連贏", 0),
+                        payouts.get("位置Q1", 0), payouts.get("位置Q2", 0), payouts.get("位置Q3", 0),
+                        payouts.get("二重彩", 0), payouts.get("三重彩", 0), payouts.get("單T", 0),
+                        payouts.get("四連環", 0), payouts.get("四重彩", 0),
                         notes
                     ]
                     sheet.append_row(row_data)
-                    st.success(f"✅ 戰績與 9 項派彩數據已完美儲存！")
+                    st.success(f"✅ 戰績與獨立分離的派彩數據已完美儲存！")
             
             st.markdown("---")
             st.header("📈 歷史獲利儀表板")

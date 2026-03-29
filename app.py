@@ -1,17 +1,17 @@
 import streamlit as st
 import pandas as pd
 import joblib
-import numpy as np
+import io
 
 # ==========================================
-# 網頁 UI 設定 (維持你最熟悉的舊版風格！)
+# 網頁 UI 設定 (完全恢復你最愛的經典介面！)
 # ==========================================
-st.set_page_config(page_title="賽馬 V4 引擎指揮中心", layout="wide")
+st.set_page_config(page_title="賽馬 V4 終極指揮中心", layout="wide")
 st.title("🌪️ AI 賽馬帝國：終極指揮中心")
-st.markdown("**(熟悉的介面，搭載最新 V4 騎練情報大腦！)**")
+st.markdown("**(熟悉的「一鍵貼上」介面，搭載最新 V4 騎練情報大腦！)**")
 
 # ==========================================
-# 側邊欄：凱利資金控管 (原封不動保留)
+# 側邊欄：凱利資金控管
 # ==========================================
 st.sidebar.header("🏦 戰備資金設定")
 total_capital = st.sidebar.number_input("今日預備作戰總本金 ($)", min_value=100, max_value=100000, value=2000, step=100)
@@ -25,14 +25,14 @@ else:
     st.sidebar.error("🚀 建議採用：【1 膽 7 腳】(每場 $350) - 撒網轟炸！")
 
 # ==========================================
-# 載入 AI 大腦 (偷偷升級成 V4)
+# 載入 V4 大腦與情報網
 # ==========================================
 @st.cache_resource
 def load_models():
     try:
         v1 = joblib.load('hkjc_ai_brain_v1.pkl')
         v2 = joblib.load('hkjc_ai_brain_v2_no_odds.pkl')
-        v4 = joblib.load('hkjc_ai_brain_v4_synergy.pkl') # 換成 V4 大腦
+        v4 = joblib.load('hkjc_ai_brain_v4_synergy.pkl') # V4 大腦
         
         # 建立騎練情報網字典
         df_v4 = pd.read_csv('5_years_master_db_v4.csv', low_memory=False)
@@ -45,26 +45,43 @@ def load_models():
 model_v1, model_v2, model_v4, synergy_map = load_models()
 
 if model_v4 is None:
-    st.error("❌ 找不到 AI 模型檔案！請確認 GitHub 上有 V4 的 .pkl 與 .csv 檔案。")
+    st.error("❌ 找不到 V4 模型檔案！請確認 GitHub 上有 .pkl 與 .csv 檔案。")
     st.stop()
 
 # ==========================================
-# 資料輸入區 (只多了騎師和練馬師，其他都不變)
+# 🌟 一鍵複製貼上區 (你最熟悉的神器)
 # ==========================================
-st.subheader("📋 請貼上今日賽事排位表 (包含：馬號, 騎師, 練馬師, 實際負磅, 排位體重, 獨贏賠率, 休息天數, 檔位)")
+st.subheader("📋 請直接貼上排位表 (支援從 Excel 或馬會網站直接複製)")
+st.markdown("*(⚠️ 貼上的資料標題必須包含：`馬號`, `騎師`, `練馬師`, `實際負磅`, `排位體重`, `獨贏賠率`, `休息天數`, `檔位`)*")
 
-default_data = pd.DataFrame(columns=['馬號', '騎師', '練馬師', '實際負磅', '排位體重', '獨贏賠率', '休息天數', '檔位'], index=range(14))
-edited_df = st.data_editor(default_data, num_rows="dynamic")
+raw_text = st.text_area("⬇️ 在這裡貼上你的文字資料：", height=200)
 
-if st.button("🚀 啟動 AI 終極預測與戰術解析", type="primary"):
-    df = edited_df.dropna(how='all').copy()
-    
-    if len(df) < 6:
-        st.warning("⚠️ 請至少輸入 6 匹馬的資料才能進行四連環預測！")
+if st.button("🚀 啟動 V4 終極預測與戰術解析", type="primary"):
+    if not raw_text.strip():
+        st.warning("⚠️ 框框是空的！請先貼上資料！")
     else:
         try:
+            # 自動解析貼上的文字 (支援 Tab 或逗號分隔)
+            try:
+                df = pd.read_csv(io.StringIO(raw_text), sep='\t')
+                if len(df.columns) < 5: # 如果 Tab 解析失敗，嘗試用逗號
+                    df = pd.read_csv(io.StringIO(raw_text), sep=',')
+            except:
+                df = pd.read_csv(io.StringIO(raw_text), delim_whitespace=True)
+
+            # 清理欄位名稱的空白，防止抓不到
+            df.columns = df.columns.str.strip()
+            
+            # 檢查必備欄位
+            required_cols = ['馬號', '騎師', '練馬師', '實際負磅', '排位體重', '獨贏賠率', '休息天數', '檔位']
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            
+            if missing_cols:
+                st.error(f"❌ 解析失敗！你的資料缺少以下必備欄位：{', '.join(missing_cols)}")
+                st.stop()
+
             # 轉換數字格式
-            for col in ['實際負磅', '排位體重', '獨贏賠率', '休息天數', '檔位']:
+            for col in ['馬號', '實際負磅', '排位體重', '獨贏賠率', '休息天數', '檔位']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             
             df = df.dropna(subset=['實際負磅', '排位體重', '獨贏賠率', '休息天數', '檔位'])
@@ -72,7 +89,7 @@ if st.button("🚀 啟動 AI 終極預測與戰術解析", type="primary"):
             
             # 獲取騎練默契
             def get_synergy(row):
-                return synergy_map.get((row['騎師'], row['練馬師']), 0.3)
+                return synergy_map.get((str(row['騎師']).strip(), str(row['練馬師']).strip()), 0.3)
             df['騎練前四率'] = df.apply(get_synergy, axis=1)
             
             # 特徵定義
@@ -98,7 +115,7 @@ if st.button("🚀 啟動 AI 終極預測與戰術解析", type="primary"):
             top_horses = df_result['馬號'].astype(int).astype(str).tolist()
             
             # ==========================================
-            # 🏆 實戰戰術儀表板 (你最熟悉的經典三欄位)
+            # 🏆 實戰戰術儀表板
             # ==========================================
             st.markdown("---")
             st.header("🏆 【終極實戰下注儀表板】")
@@ -125,4 +142,4 @@ if st.button("🚀 啟動 AI 終極預測與戰術解析", type="primary"):
             st.dataframe(df_result[['馬號', '騎師', '練馬師', '預測入位率', '騎練默契', '獨贏賠率', '錯價指數', '檔位', '實際負磅']], use_container_width=True)
 
         except Exception as e:
-            st.error(f"❌ 運算發生錯誤，請檢查輸入資料格式是否正確。錯誤訊息: {e}")
+            st.error(f"❌ 解析失敗！請確定你貼上的是帶有標題列的表格文字。錯誤細節: {e}")

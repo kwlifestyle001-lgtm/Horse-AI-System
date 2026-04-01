@@ -100,9 +100,14 @@ with tab1:
             with st.spinner("生物特徵與實力對抗計算中..."):
                 # A. 基礎物理與近況計算
                 df['負磅比率'] = df['實際負磅'] / df['排位體重']
+                
+                # 定義 V1 用的特徵 (包含賠率)
                 f1 = ['實際負磅', '排位體重', '獨贏賠率', '負磅比率', '休息天數', '檔位']
-                df['V1_P'] = m1.predict_proba(df[f1])[:, 1]
-                df['V2_P'] = m2.predict_proba(df[f1.remove('獨贏賠率') if '獨贏賠率' in f1 else f1])[:, 1]
+                df['V1_P'] = m1.predict_proba(df[f1].apply(pd.to_numeric, errors='coerce').fillna(0))[:, 1]
+                
+                # 定義 V2 用的特徵 (不包含賠率，使用列表推導式安全過濾)
+                f2 = [col for col in f1 if col != '獨贏賠率']
+                df['V2_P'] = m2.predict_proba(df[f2].apply(pd.to_numeric, errors='coerce').fillna(0))[:, 1]
                 df['錯價指數'] = df['V2_P'] - (1/df['獨贏賠率'])
                 df['騎練前四率'] = df.apply(lambda r: synergy_map.get((str(r['騎師']).strip(), str(r['練馬師']).strip()), 0.3), axis=1)
                 

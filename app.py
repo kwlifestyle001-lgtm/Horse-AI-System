@@ -2,14 +2,19 @@ import streamlit as st
 import pandas as pd
 import joblib
 import datetime
-import os
 import re
 import json
 import gspread
 from google.oauth2.service_account import Credentials
+import warnings
+warnings.filterwarnings('ignore')
 
-st.set_page_config(page_title="AI 賽馬帝國神算子", page_icon="🏇", layout="wide")
-st.title("🏇 AI 賽馬帝國 V7.0 (雲端永生版)")
+# ==========================================
+# 網頁 UI 設定
+# ==========================================
+st.set_page_config(page_title="AI 賽馬帝國 V8.0 終極完全體", page_icon="🏇", layout="wide")
+st.title("🌪️ AI 賽馬帝國 V8.0 (終極完全體)")
+st.markdown("**(一鍵解析 + Google雲端 + V4情報大腦 + 抗壓指示燈)**")
 st.markdown("---")
 
 # ==========================================
@@ -24,204 +29,231 @@ def get_gspread_client():
             creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
             return gspread.authorize(creds)
         except Exception as e:
-            st.error(f"Google 雲端連線失敗，請檢查 Secrets 設定: {e}")
+            st.error(f"Google 雲端連線失敗: {e}")
             return None
     return None
 
 gc = get_gspread_client()
 
 # ==========================================
-# 1. 載入雙核心 AI 大腦
+# 1. 載入 AI 大腦 與 V4 情報庫
 # ==========================================
 @st.cache_resource
-def load_models():
+def load_resources():
     try:
-        model_v1 = joblib.load('hkjc_ai_brain_v1.pkl')
-        model_v2 = joblib.load('hkjc_ai_brain_v2_no_odds.pkl')
-        return model_v1, model_v2
+        m1 = joblib.load('hkjc_ai_brain_v1.pkl')
+        m2 = joblib.load('hkjc_ai_brain_v2_no_odds.pkl')
+        m3 = joblib.load('hkjc_ai_brain_v3_holygrail.pkl')
+        m4 = joblib.load('hkjc_ai_brain_v4_synergy.pkl')
+        
+        df_v4_ref = pd.read_csv('5_years_master_db_v4.csv', low_memory=False)
+        synergy_map = df_v4_ref.drop_duplicates(subset=['騎師', '練馬師']).set_index(['騎師', '練馬師'])['騎練前四率'].to_dict()
+        
+        return m1, m2, m3, m4, synergy_map
     except Exception as e:
-        st.error(f"找不到 AI 大腦檔案！錯誤: {e}")
-        return None, None
+        st.error(f"資源載入失敗！請確認模型與資料庫檔案皆已上傳: {e}")
+        return None, None, None, None, None
 
-model_v1, model_v2 = load_models()
+model_v1, model_v2, model_v3, model_v4, synergy_map = load_resources()
 
 if 'races_db' not in st.session_state:
     st.session_state['races_db'] = {}
+if 'current_prediction' not in st.session_state:
+    st.session_state['current_prediction'] = None
 
 # ==========================================
-# 2. 核心黑科技：終極雷達 (新增騎師馬房擷取)
+# 2. 核心黑科技：文字解析雷達
 # ==========================================
 def parse_horse_data(text):
+    text = re.sub(r'[\(（]\-\d+[\)）]', '', text).replace('\n', ' ').replace('\t', ' ').replace('>', ' ').replace('\xa0', ' ')
     parsed = []
-    text = text.replace('\n', ' ').replace('\t', ' ').replace('>', ' ').replace('\xa0', ' ')
     
     for i in range(1, 15):
         pattern = rf'(?<!\d){i}(?!\d)\s*\.?\s*([\u4e00-\u9fa5]{{2,6}})'
         match = re.search(pattern, text)
-        
         if match:
             name = match.group(1)
-            chunk = text[match.end():match.end()+80]
+            next_pattern = rf'(?<!\d){i+1}(?!\d)\s*\.?\s*[\u4e00-\u9fa5]'
+            next_match = re.search(next_pattern, text[match.end():])
+            end_pos = match.end() + next_match.start() if next_match else match.end() + 60
+            chunk = text[match.end():end_pos]
             
-            # 抓取檔位跟負磅
             dw_wt = re.search(r'(?<!\d)(\d{1,2})\s*(1[1-3]\d)(?!\d)', chunk)
-            if dw_wt:
-                draw = int(dw_wt.group(1))
-                wt = int(dw_wt.group(2))
-            else:
-                draw, wt = 1, 125
+            draw, wt = (int(dw_wt.group(1)), int(dw_wt.group(2))) if dw_wt else (1, 125)
                 
-            # 抓取騎師與馬房 (抓取不是馬名、不是數字的純中文字)
-            chinese_chars = "".join(re.findall(r'[\u4e00-\u9fa5]+', chunk))
-            jockey_trainer = chinese_chars.replace(name, "")[:8] # 取前8個字當作騎練組合
-            if not jockey_trainer: jockey_trainer = "未知"
+            chinese_blocks = re.findall(r'[\u4e00-\u9fa5]+', chunk[:40])
+            j_t_list = [word for word in chinese_blocks if word not in [name, "倍", "自"]]
+            jockey = j_t_list[0] if len(j_t_list) > 0 else "未知"
+            trainer = j_t_list[1] if len(j_t_list) > 1 else "未知"
                 
-            # 盡力尋找獨贏賠率
             odds = 10.0
             numbers = re.findall(r'(?<!\d)(\d{1,3}(?:\.\d)?)(?!\d)', chunk)
-            ignore_list = [str(draw), str(wt)]
-            if dw_wt: ignore_list.append(dw_wt.group(0).replace(" ", ""))
-            
-            possible_odds = [float(x) for x in numbers if x not in ignore_list]
-            if possible_odds:
-                odds = possible_odds[0]
-                if odds > 100: 
-                    odds_str = str(odds)
-                    dot_idx = odds_str.find('.')
-                    if dot_idx > 1:
-                        try: odds = float(odds_str[:dot_idx-1])
-                        except: pass
+            possible_odds = [float(x) for x in numbers if x not in [str(draw), str(wt)]]
+            if possible_odds: odds = possible_odds[0]
                         
             parsed.append({
-                '馬號': i, '馬名': name, '騎師/馬房': jockey_trainer,
+                '馬號': i, '馬名': name, '騎師': jockey, '練馬師': trainer,
                 '實際負磅': wt, '排位體重': 1100, '檔位': draw, 
                 '獨贏賠率': odds, '休息天數': 30
             })
-            
     return parsed
 
 # ==========================================
-# 3. 側邊欄 (Sidebar)
+# 3. 側邊欄設定
 # ==========================================
-st.sidebar.header("⚙️ 賽事基本設定")
-race_date = st.sidebar.date_input("選擇賽事日期：", datetime.date.today())
-race_no = st.sidebar.radio("選擇場次：", range(1, 11), horizontal=True)
+st.sidebar.header("⚙️ 賽事設定")
+race_date = st.sidebar.date_input("賽事日期：", datetime.date.today())
+race_no = st.sidebar.radio("選擇場次：", range(1, 15), horizontal=True)
 race_key = f"{race_date}_Race{race_no}"
 
 st.sidebar.markdown("---")
-st.sidebar.header("📋 一鍵智能建表")
-pasted_text = st.sidebar.text_area("貼上排位與賠率：", height=200)
+st.sidebar.header("📋 一鍵貼上解析")
+pasted_text = st.sidebar.text_area("在此貼上排位資料：", height=200)
 
-if st.sidebar.button("🔄 解析文字並生成表格"):
+if st.sidebar.button("🔄 解析並生成表格"):
     if pasted_text:
-        with st.sidebar.status("雷達鎖定掃描中..."):
+        with st.sidebar.status("情報雷達掃描中..."):
             extracted_data = parse_horse_data(pasted_text)
             if extracted_data:
                 st.session_state['races_db'][race_key] = pd.DataFrame(extracted_data)
-                st.sidebar.success(f"✅ 雷達掃描成功！抓取到 {len(extracted_data)} 匹馬！")
                 st.rerun()
-            else:
-                st.sidebar.error("⚠️ 找不到資料！")
-    else:
-        st.sidebar.warning("請先貼上文字！")
 
 # ==========================================
-# 4. 雙分頁系統
+# 4. 主分頁系統
 # ==========================================
-tab1, tab2 = st.tabs(["🔮 AI 預測大廳", "🏆 雲端戰績資料庫"])
+tab1, tab2, tab3 = st.tabs(["🔮 AI 預測大廳", "🏆 財務對帳台", "📚 過往資料庫"])
 
 with tab1:
-    mode = st.radio("選擇 AI 預測模式：", ("💰 殺莊模式 (包含即時賠率)", "💪 物理模式 (純看客觀實力)"), horizontal=True)
-    col1, col2 = st.columns([2, 1]) 
+    mode = st.radio("作戰大腦：", ("⚔️ V4 情報終極版", "🏆 V3 聖杯融合", "💰 V1 殺莊", "💪 V2 物理"), horizontal=True)
     
-    with col1:
-        st.subheader(f"🏆 正在分析：{race_date} ｜ 第 {race_no} 場")
-        if race_key in st.session_state['races_db']:
-            df = st.session_state['races_db'][race_key]
-            edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
-            st.session_state['races_db'][race_key] = edited_df
-            
-            if st.button("🚀 啟動 AI 預測！", type="primary"):
-                with st.spinner('AI 大腦高速運算中...'):
-                    edited_df['負磅比率'] = edited_df['實際負磅'] / edited_df['排位體重']
-                    features = ['實際負磅', '排位體重', '獨贏賠率', '負磅比率', '休息天數', '檔位'] if "殺莊" in mode else ['實際負磅', '排位體重', '負磅比率', '休息天數', '檔位']
-                    model = model_v1 if "殺莊" in mode else model_v2
-                    probabilities = model.predict_proba(edited_df[features])[:, 1]
-                    edited_df['AI預測入位率(%)'] = probabilities * 100
-                    final_df = edited_df.sort_values(by='AI預測入位率(%)', ascending=False).reset_index(drop=True)
+    if race_key in st.session_state['races_db']:
+        df = st.session_state['races_db'][race_key]
+        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+        st.session_state['races_db'][race_key] = edited_df
+        
+        if st.button("🚀 啟動 AI 終極運算", type="primary"):
+            with st.spinner("神經網路運算中..."):
+                # 預測核心函數 (完美解決名稱報錯)
+                def predict_core(input_df, odds_adj=1.0):
+                    temp = input_df.copy()
+                    temp['獨贏賠率'] = temp['獨贏賠率'] * odds_adj
+                    temp['負磅比率'] = temp['實際負磅'] / temp['排位體重']
+                    f1 = ['實際負磅', '排位體重', '獨贏賠率', '負磅比率', '休息天數', '檔位']
+                    f2 = ['實際負磅', '排位體重', '負磅比率', '休息天數', '檔位']
                     
-                    def get_tag(row):
-                        prob = row['AI預測入位率(%)']
-                        odds = row['獨贏賠率']
-                        if prob > 60: return "🔥🔥 鐵膽"
-                        elif prob > 35 and odds >= 10.0: return "💎 價值冷門"
-                        elif prob < 20: return "⚠️ 避開"
-                        else: return ""
-                    final_df['AI 評語'] = final_df.apply(get_tag, axis=1)
-                    st.success("✅ 預測完成！")
-                    st.dataframe(
-                        final_df[['馬號', '馬名', '騎師/馬房', '檔位', '實際負磅', '獨贏賠率', 'AI預測入位率(%)', 'AI 評語']].style.format({'AI預測入位率(%)': '{:.1f}%', '獨贏賠率': '{:.1f}'})
-                        .background_gradient(subset=['AI預測入位率(%)'], cmap='Blues'),
-                        use_container_width=True, height=500
-                    )
-        else:
-            st.warning("👈 尚未載入資料！請從左側欄貼上文字。")
+                    temp['V1_機率'] = model_v1.predict_proba(temp[f1])[:, 1]
+                    temp['V2_機率'] = model_v2.predict_proba(temp[f2])[:, 1]
+                    temp['錯價指數'] = temp['V2_機率'] - (1 / temp['獨贏賠率'])
+                    temp['騎練前四率'] = temp.apply(lambda r: synergy_map.get((str(r['騎師']).strip(), str(r['練馬師']).strip()), 0.3), axis=1)
+                    
+                    v4_f = ['V1_機率', 'V2_機率', '錯價指數', '獨贏賠率', '實際負磅', '檔位', '騎練前四率']
+                    return temp, model_v4.predict_proba(temp[v4_f].apply(pd.to_numeric, errors='coerce').fillna(0))[:, 1]
+
+                # 進行預測
+                if "V4" in mode:
+                    # 1. 取得現時基準機率 (1.0x) - 保留爆冷暴利
+                    base_df, probs_now = predict_core(edited_df, 1.0)
+                    base_df['AI預測入位率(%)'] = probs_now * 100
+                    
+                    # 2. 進行抗壓測試 (0.8x, 1.2x) 尋找鋼鐵穩膽
+                    _, probs_hot = predict_core(edited_df, 0.8)
+                    _, probs_cold = predict_core(edited_df, 1.2)
+                    
+                    base_df['P_hot'] = probs_hot
+                    base_df['P_cold'] = probs_cold
+                    
+                    top2_now = set(base_df.nlargest(2, 'AI預測入位率(%)')['馬號'])
+                    top2_hot = set(base_df.nlargest(2, 'P_hot')['馬號'])
+                    top2_cold = set(base_df.nlargest(2, 'P_cold')['馬號'])
+                    
+                    def check_stable(m_no):
+                        if m_no in top2_now and m_no in top2_hot and m_no in top2_cold:
+                            return "💎 鋼鐵穩膽"
+                        elif m_no in top2_now:
+                            return "✅ V4 首選"
+                        return ""
+                    
+                    base_df['穩定度分析'] = base_df['馬號'].apply(check_stable)
+                    final_df = base_df.sort_values(by='AI預測入位率(%)', ascending=False).reset_index(drop=True)
+                else:
+                    # 兼容 V1, V2, V3
+                    edited_df['負磅比率'] = edited_df['實際負磅'] / edited_df['排位體重']
+                    f1 = ['實際負磅', '排位體重', '獨贏賠率', '負磅比率', '休息天數', '檔位']
+                    f2 = ['實際負磅', '排位體重', '負磅比率', '休息天數', '檔位']
+                    edited_df['V1_機率'] = model_v1.predict_proba(edited_df[f1])[:, 1]
+                    edited_df['V2_機率'] = model_v2.predict_proba(edited_df[f2])[:, 1]
+                    edited_df['莊家機率'] = 1 / edited_df['獨贏賠率']
+                    edited_df['錯價指數'] = edited_df['V2_機率'] - edited_df['莊家機率']
+                    
+                    if "V3" in mode:
+                        v3_f = ['V1_機率', 'V2_機率', '錯價指數', '獨贏賠率', '實際負磅', '檔位']
+                        probs = model_v3.predict_proba(edited_df[v3_f])[:, 1]
+                    else:
+                        probs = edited_df['V1_機率'] if "V1" in mode else edited_df['V2_機率']
+                        
+                    edited_df['AI預測入位率(%)'] = probs * 100
+                    edited_df['騎練前四率'] = 0.0
+                    edited_df['穩定度分析'] = ""
+                    final_df = edited_df.sort_values(by='AI預測入位率(%)', ascending=False).reset_index(drop=True)
+
+                st.session_state['current_prediction'] = final_df
+                st.success("✅ AI 運算完成！")
+
+        if st.session_state['current_prediction'] is not None:
+            res = st.session_state['current_prediction']
             
-    with col2:
-        st.subheader("🧮 智能注碼分配機")
-        with st.expander("點擊展開", expanded=True):
-            total_budget = st.number_input("💰 總預算 ($)：", min_value=10, value=1000, step=10)
-            odds1 = st.number_input("馬匹 A 賠率：", min_value=1.01, value=5.5, step=0.1)
-            odds2 = st.number_input("馬匹 B 賠率：", min_value=1.01, value=12.0, step=0.1)
-            odds3 = st.number_input("馬匹 C 賠率 (不買填 0)：", min_value=0.0, value=0.0, step=0.1)
-            if st.button("⚖️ 計算注碼"):
-                prob1, prob2 = 1/odds1, 1/odds2
-                prob3 = 1/odds3 if odds3 > 0 else 0
-                total_prob = prob1 + prob2 + prob3
-                bet1, bet2 = (total_budget * prob1) / total_prob, (total_budget * prob2) / total_prob
-                bet3 = (total_budget * prob3) / total_prob if odds3 > 0 else 0
-                st.success(f"✅ 保底淨利潤：${(bet1 * odds1) - total_budget:.0f}")
-                st.write(f"💵 買 A：${bet1:.0f} | 買 B：${bet2:.0f}" + (f" | 買 C：${bet3:.0f}" if odds3>0 else ""))
+            # 顯示表格 (使用 V4 正確名稱，但介面看起來乾淨)
+            display_cols = ['馬號', '馬名', '騎師', '練馬師', 'AI預測入位率(%)', '穩定度分析', '騎練前四率', '獨贏賠率', '檔位']
+            st.dataframe(res[display_cols].style.format({'AI預測入位率(%)': '{:.1f}%', '騎練前四率': '{:.1f}%'}).background_gradient(subset=['AI預測入位率(%)'], cmap='RdYlGn'), use_container_width=True)
+            
+            # ==========================================
+            # 🏆 實戰戰術儀表板
+            # ==========================================
+            st.markdown("---")
+            st.header("🏆 【V8.0 實戰下注儀表板】")
+            h = res['馬號'].astype(int).astype(str).tolist()
+            c1, c2, c3 = st.columns(3)
+            
+            with c1:
+                st.success(f"⚖️ **【基礎】2膽6腳 ($150)**\n\n維持現金流的穩定陣型。\n\n**雙膽：** {h[0]}, {h[1]}\n**配腳：** {', '.join(h[2:8])}")
+            with c2:
+                st.warning(f"🚀 **【暴利】四重彩 ($600)**\n\n若前兩名有『💎 鋼鐵穩膽』可考慮此陣型！\n\n**1, 2名互換：** {h[0]}, {h[1]}\n**配腳：** {', '.join(h[2:8])}")
+            with c3:
+                st.error(f"💰 **【避險】位置Q**\n\n**互串：** {h[0]} x {h[1]}")
+
+            if st.button("💾 將本場預測存入雲端歷史庫"):
+                if gc:
+                    try:
+                        sh = gc.open("Horse_AI_Database").worksheet("完整排位庫")
+                        save_df = res[['馬號', '馬名', '騎師', '練馬師', 'AI預測入位率(%)', '騎練前四率', '獨贏賠率', '穩定度分析']].copy()
+                        save_df.insert(0, '場次', f"第 {race_no} 場")
+                        save_df.insert(0, '日期', str(race_date))
+                        sh.append_rows(save_df.values.tolist())
+                        st.success("✅ 已同步至雲端資料庫！")
+                    except Exception as e:
+                        st.error(f"存檔失敗，請確認是否已建立分頁: {e}")
 
 with tab2:
-    st.header(f"📝 紀錄賽果至 Google Sheets")
-    
+    st.header("📝 財務對帳台")
     if gc:
         try:
             sheet = gc.open("Horse_AI_Database").worksheet("戰績歷史")
-            # 如果表是空的，先寫入標題
-            if not sheet.get_all_values():
-                sheet.append_row(["日期", "場次", "冠軍", "亞軍", "季軍", "殿軍", "本場盈虧", "筆記"])
-                
-            with st.form("result_form"):
-                col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-                first = col_r1.number_input("🥇 冠軍", min_value=1, max_value=14, step=1, value=1)
-                second = col_r2.number_input("🥈 亞軍", min_value=1, max_value=14, step=1, value=2)
-                third = col_r3.number_input("🥉 季軍", min_value=1, max_value=14, step=1, value=3)
-                fourth = col_r4.number_input("🏅 殿軍", min_value=1, max_value=14, step=1, value=4)
-                st.markdown("---")
-                profit_loss = st.number_input("💰 本場實際盈虧 ($)", value=0.0, step=10.0)
-                notes = st.text_input("📝 賽後筆記：")
-                
-                if st.form_submit_button("💾 儲存至雲端試算表"):
-                    # 寫入 Google Sheets
-                    sheet.append_row([str(race_date), f"第 {race_no} 場", first, second, third, fourth, profit_loss, notes])
-                    st.success(f"✅ 成功！戰績已永久儲存至你的 Google 試算表！")
-            
-            st.markdown("---")
-            st.header("📈 你的專屬獲利儀表板 (即時讀取)")
-            records = sheet.get_all_records()
-            if records:
-                history_df = pd.DataFrame(records)
-                total_profit = pd.to_numeric(history_df['本場盈虧'], errors='coerce').sum()
-                st.metric(label="累積總盈虧", value=f"{'+' if total_profit > 0 else ''}${total_profit:,.1f}")
-                history_df['累積盈虧'] = pd.to_numeric(history_df['本場盈虧'], errors='coerce').cumsum()
-                st.line_chart(history_df['累積盈虧'])
-                st.dataframe(history_df, use_container_width=True)
-            else:
-                st.info("目前還沒有戰績，趕快輸入第一筆吧！")
-                
+            with st.form("f_form"):
+                p_l = st.number_input("💰 本場實際盈虧 ($)", step=10.0)
+                note = st.text_input("📝 賽後檢討筆記")
+                if st.form_submit_button("💾 正式儲存戰績"):
+                    sheet.append_row([str(race_date), f"第 {race_no} 場", "", "", "", "", p_l, note])
+                    st.success("戰績已成功儲存！")
         except Exception as e:
-            st.error(f"讀取試算表發生錯誤：{e}")
-    else:
-        st.warning("⚠️ 系統尚未連線至 Google 雲端！請完成 Secrets 設定。")
+            st.error(f"連線失敗: {e}")
+
+with tab3:
+    st.header("📚 過往 V4 完整資料庫")
+    if gc:
+        try:
+            full_data = pd.DataFrame(gc.open("Horse_AI_Database").worksheet("完整排位庫").get_all_records())
+            if not full_data.empty:
+                d = st.selectbox("📅 選擇回顧日期：", full_data['日期'].unique())
+                st.dataframe(full_data[full_data['日期'] == d], use_container_width=True)
+        except Exception as e:
+            st.info("資料庫目前尚無資料。")
